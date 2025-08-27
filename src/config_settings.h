@@ -43,8 +43,8 @@ struct GameSettings { // KFX settings
     unsigned char video_rotate_mode;
     unsigned char video_textures;
     unsigned char video_cluedo_mode;
-    unsigned char sound_volume;
-    unsigned char music_volume;
+    unsigned char effects_volume; // Range 0-127
+    unsigned char music_volume; // Range 0-127
     unsigned char roomflags_on;
     unsigned short gamma_correction;
     int switching_vidmodes_index; /**< The current position in the list of video modes to switch between with Alt+R (-1 means the index is unset). */
@@ -55,9 +55,11 @@ struct GameSettings { // KFX settings
     unsigned int minimap_zoom;
     unsigned long isometric_view_zoom_level;
     unsigned long frontview_zoom_level;
-    long mentor_volume;
+    unsigned char mentor_volume; // range 0-127
+    unsigned char master_volume; // range 0-127
+    char unused[2]; // was upper two bytes of mentor_volume
     int isometric_tilt;
-    };
+};
 #pragma pack()
 /******************************************************************************/
 extern struct GameSettings settings; // KFX settings

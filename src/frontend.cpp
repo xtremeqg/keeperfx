@@ -1351,7 +1351,7 @@ void gui_area_text(struct GuiButton *gbtn)
 void frontend_init_options_menu(struct GuiMenu *gmnu)
 {
     get_gui_button_init(gmnu, BID_MUSIC_VOL)->content.lval = make_audio_slider_linear(settings.music_volume);
-    get_gui_button_init(gmnu, BID_SOUND_VOL)->content.lval = make_audio_slider_linear(settings.sound_volume);
+    get_gui_button_init(gmnu, BID_SOUND_VOL)->content.lval = make_audio_slider_linear(settings.effects_volume);
     get_gui_button_init(gmnu, BID_MENTOR_VOL)->content.lval = make_audio_slider_linear(settings.mentor_volume);
     get_gui_button_init(gmnu, BID_MOUSE_MUL)->content.lval = settings.first_person_move_sensitivity;
     if (!is_campaign_loaded())

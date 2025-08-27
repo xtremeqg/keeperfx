@@ -23,15 +23,12 @@
 #include "bflib_sound.h"
 #include "globals.h"
 
-#include <SDL2/SDL_mixer.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define FULL_LOUDNESS 256
-#define NORMAL_PITCH 100
-#define MIX_SPEECH_CHANNEL 0
+#define FULL_LOUDNESS 256 // Maximum value for SoundVolume
+#define NORMAL_PITCH 100 // Normal value for SoundPitch
 
 /******************************************************************************/
 #pragma pack(1)
@@ -63,7 +60,6 @@ enum SoundSettingsFlags {
 };
 
 extern int atmos_sound_frequency;
-extern int sdl_flags;
 
 #pragma pack()
 
@@ -87,10 +83,10 @@ void mute_audio(TbBool mute);
 
 void update_first_person_object_ambience(struct Thing *thing);
 
-int InitialiseSDLAudio();
-void ShutDownSDLAudio();
-TbBool play_streamed_sample(const char * fname, SoundVolume);
-void set_streamed_sample_volume(SoundVolume);
+TbBool stream_mentor_speech(const char * fname);
+TbBool stream_sound_effect(const char * fname, SoundVolume, SoundPan, SoundPitch);
+void set_mentor_volume(SoundVolume);
+void set_effects_volume(SoundVolume);
 void stop_streamed_samples();
 /******************************************************************************/
 #ifdef __cplusplus

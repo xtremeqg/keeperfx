@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 void FreeAudio(void);
-void SetSoundMasterVolume(SoundVolume);
+void set_master_volume(SoundVolume);
 TbBool GetSoundInstalled(void);
 void MonitorStreamedSoundTrack(void);
 void * GetSoundDriver(void);

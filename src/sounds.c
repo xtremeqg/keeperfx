@@ -64,7 +64,6 @@ const char foot_down_sound_sample_variant[] = {
 char sound_dir[64] = "SOUND";
 int atmos_sound_frequency = 800;
 static char ambience_timer;
-int sdl_flags = 0;
 /******************************************************************************/
 void thing_play_sample(struct Thing *thing, SoundSmplTblID smptbl_idx, SoundPitch pitch, char repeats, unsigned char ctype, unsigned char flags, long priority, SoundVolume loudness)
 {
@@ -76,7 +75,7 @@ void thing_play_sample(struct Thing *thing, SoundSmplTblID smptbl_idx, SoundPitc
         return;
 
     // Apply sound volume setting to current sound's loudness level
-    SoundVolume volume_scale = LbLerp(0, FULL_LOUDNESS, (float)settings.sound_volume/127.0); // [0-127] rescaled to [0-256]
+    SoundVolume volume_scale = FULL_LOUDNESS * ((float) settings.effects_volume / 127); // [0-127] rescaled to [0-256]
     SoundVolume adjusted_loudness = (loudness * volume_scale) / FULL_LOUDNESS;
 
     struct Coord3d rcpos;
@@ -409,7 +408,6 @@ TbBool init_sound(void)
     snd_settng->redbook_enable = ((features_enabled & Ft_NoCdMusic) == 0);
     snd_settng->sound_system = 0;
     InitAudio(snd_settng);
-    sdl_flags = InitialiseSDLAudio();
     if (!GetSoundInstalled())
     {
       SoundDisabled = 1;
@@ -517,14 +515,12 @@ void mute_audio(TbBool mute)
     {
         if (mute)
         {
-            SetSoundMasterVolume(0);
-            set_music_volume(0);
+            set_master_volume(0);
             pause_music(); // volume seems to have no effect on CD audio, so just pause/resume it
         }
         else
         {
-            set_music_volume(settings.music_volume);
-            SetSoundMasterVolume(settings.sound_volume);
+            set_master_volume(FULL_LOUDNESS * ((float) settings.master_volume / 127));
             resume_music();
         }
     }

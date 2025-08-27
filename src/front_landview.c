@@ -89,7 +89,7 @@ unsigned long played_good_descriptive_speech;
 struct TbSpriteSheet * map_flag = NULL;
 struct TbSpriteSheet * map_font = NULL;
 struct TbSpriteSheet * map_hand = NULL;
-long map_sound_fade;
+float map_sound_fade; // Range 0.0 - 1.0
 unsigned char *map_screen;
 long fe_net_level_selected;
 long net_map_limp_time;
@@ -224,7 +224,8 @@ void update_net_ensigns_visibility(void)
     }
 }
 
-int compute_sound_good_to_bad_factor(void)
+// Returns a value between 0.0 (all bad) and 1.0 (all good)
+float compute_sound_good_to_bad_factor(void)
 {
     SYNCDBG(18, "Starting");
     unsigned int onscr_bad = 0;
@@ -251,32 +252,28 @@ int compute_sound_good_to_bad_factor(void)
     }
     if ((onscr_bad + onscr_good) == 0)
         onscr_good++;
-    // return a value between 0 (all bad) and 256 (all good)
-    return (FULL_LOUDNESS * onscr_good) / (onscr_bad + onscr_good);
+    return (float) ((FULL_LOUDNESS * onscr_good) / (onscr_bad + onscr_good)) / FULL_LOUDNESS;
 }
 
 void update_frontmap_ambient_sound(void)
 {
     // NOTE: the good / bad samples start at a volume of zero.
     SoundEmitterID emit_id = get_emitter_id(S3DGetSoundEmitter(Non3DEmitter));
-    if (map_sound_fade > 0)
+    if (map_sound_fade > 0.1f)
     {
         long lvidx = array_index_for_singleplayer_level(get_continue_level_number());
         if ((features_enabled & Ft_AdvAmbSound) != 0)
         {
-            long factor = compute_sound_good_to_bad_factor();
-            SetSampleVolume(emit_id, campaign.ambient_good, (map_sound_fade * (((long)settings.sound_volume * factor) / FULL_LOUDNESS)) / FULL_LOUDNESS);
-            SetSampleVolume(emit_id, campaign.ambient_bad, (map_sound_fade * (((long)settings.sound_volume * (FULL_LOUDNESS - factor)) / FULL_LOUDNESS)) / FULL_LOUDNESS);
-        } else
-        if (lvidx > 13)
-        {
-            SetSampleVolume(emit_id, campaign.ambient_bad, ((long)settings.sound_volume * map_sound_fade) / FULL_LOUDNESS);
-        } else
-        {
-        SetSampleVolume(emit_id, campaign.ambient_good, ((long)settings.sound_volume * map_sound_fade) / FULL_LOUDNESS);
+            const float factor = compute_sound_good_to_bad_factor();
+            SetSampleVolume(emit_id, campaign.ambient_good, FULL_LOUDNESS * map_sound_fade * factor * ((float) settings.effects_volume / 127));
+            SetSampleVolume(emit_id, campaign.ambient_bad, FULL_LOUDNESS * map_sound_fade * (1.0f - factor) * ((float) settings.effects_volume / 127));
+        } else if (lvidx > 13) {
+            SetSampleVolume(emit_id, campaign.ambient_bad, FULL_LOUDNESS * map_sound_fade * ((float) settings.effects_volume / 127));
+        } else {
+            SetSampleVolume(emit_id, campaign.ambient_good, FULL_LOUDNESS * map_sound_fade * ((float) settings.effects_volume / 127));
         }
-        set_streamed_sample_volume(((long)settings.sound_volume * map_sound_fade) / FULL_LOUDNESS);
-        set_music_volume((map_sound_fade * settings.music_volume) / FULL_LOUDNESS);
+        set_mentor_volume(FULL_LOUDNESS * map_sound_fade * ((float) settings.effects_volume / 127));
+        set_music_volume(FULL_LOUDNESS * map_sound_fade * ((float) settings.music_volume / 127));
     } else
     {
         if ((features_enabled & Ft_AdvAmbSound) != 0)
@@ -285,7 +282,7 @@ void update_frontmap_ambient_sound(void)
             SetSampleVolume(emit_id, campaign.ambient_bad, 0);
         }
         set_music_volume(0);
-        set_streamed_sample_volume(0);
+        set_mentor_volume(0);
     }
 }
 
@@ -755,7 +752,7 @@ TbBool play_description_speech(LevelNumber lvnum, short play_good)
     playing_speech_lvnum = lvnum;
     SYNCMSG("Playing %s", fname);
     //volume is overwritten in update_frontmap_ambient_sound
-    return play_streamed_sample(fname, settings.sound_volume);
+    return stream_mentor_speech(fname);
 }
 
 TbBool set_pointer_graphic_spland(long frame)
@@ -995,7 +992,7 @@ void frontnetmap_unload(void)
     memcpy(&frontend_palette, frontend_backup_palette, PALETTE_SIZE);
     fe_network_active = 0;
     stop_music();
-    set_music_volume(settings.music_volume);
+    set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
 }
 
 static void frontmap_start_music(void)
@@ -1054,9 +1051,9 @@ TbBool frontnetmap_load(void)
     net_level_hilighted = SINGLEPLAYER_NOTSTARTED;
     set_pointer_graphic_none();
     LbMouseSetPosition(lbDisplay.PhysicalScreenWidth/2, lbDisplay.PhysicalScreenHeight/2);
-    map_sound_fade = FULL_LOUDNESS;
+    map_sound_fade = 1.0f;
     lbDisplay.DrawFlags = 0;
-    set_music_volume(settings.music_volume);
+    set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
     frontmap_start_music();
     if (fe_network_active)
     {
@@ -1080,7 +1077,7 @@ TbBool frontnetmap_load(void)
 void process_map_zoom_in(void)
 {
     step_frontmap_info_screen_shift_zoom();
-    map_sound_fade = max(0, FULL_LOUDNESS + ((5 * (1 - map_info.fade_pos)) / FRONTMAP_ZOOM_STEP));
+    map_sound_fade = ((float) max(0, FULL_LOUDNESS + ((5 * (1 - map_info.fade_pos)) / FRONTMAP_ZOOM_STEP))) / FULL_LOUDNESS;
 }
 
 void process_map_zoom_out(void)
@@ -1193,7 +1190,7 @@ TbBool frontmap_load(void)
         frontmap_zoom_out_init(prev_singleplayer_level(lvnum), lvnum);
     }
     SYNCDBG(9,"Zoom hotspot set to (%d,%d) %s fade",(int)map_info.hotspot_imgpos_x,(int)map_info.hotspot_imgpos_y,(map_info.fadeflags & MLInfoFlg_Zooming)?"with":"without");
-    map_sound_fade = FULL_LOUDNESS;
+    map_sound_fade = 1.0f;
     map_info.velocity_x = 0;
     map_info.velocity_y = 0;
     set_pointer_graphic_spland(0);
@@ -1205,7 +1202,7 @@ TbBool frontmap_load(void)
         play_sample(emit_id, campaign.ambient_good, 0, 0x40, NORMAL_PITCH, -1, 2, 0);
         play_sample(emit_id, campaign.ambient_bad, 0, 0x40, NORMAL_PITCH, -1, 2, 0);
     }
-    set_music_volume(settings.music_volume);
+    set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
     frontmap_start_music();
     fe_computer_players = 0;
     update_ensigns_visibility();
@@ -1783,7 +1780,7 @@ TbBool frontnetmap_update_players(struct NetMapPlayersState * nmps)
 TbBool frontnetmap_update(void)
 {
     SYNCDBG(8,"Starting");
-    set_music_volume((map_sound_fade * settings.music_volume) / FULL_LOUDNESS);
+    set_music_volume(FULL_LOUDNESS * map_sound_fade * ((float) settings.music_volume / 127));
 
     struct NetMapPlayersState nmps;
     nmps.tmp1 = 0;

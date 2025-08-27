@@ -1186,8 +1186,10 @@ short setup_game(void)
   {
       init_keeper();
       set_gamma(settings.gamma_correction, 0);
-      set_music_volume(settings.music_volume);
-      SetSoundMasterVolume(settings.sound_volume);
+      set_master_volume(FULL_LOUDNESS * ((float) settings.master_volume / 127));
+      set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
+      set_effects_volume(FULL_LOUDNESS * ((float) settings.effects_volume / 127));
+      set_mentor_volume(FULL_LOUDNESS * ((float) settings.mentor_volume / 127));
       setup_mesh_randomizers();
       setup_stuff();
       init_lookups();
@@ -3848,7 +3850,6 @@ void game_loop(void)
     if ((game.system_flags & GSF_CaptureMovie) != 0) {
         movie_record_stop();
     }
-    ShutDownSDLAudio();
     SYNCDBG(7,"Done");
 }
 
@@ -3965,13 +3966,11 @@ short process_command_line(unsigned short argc, char *argv[])
       {
         set_flag(start_params.operation_flags, GOF_SingleLevel);
         level_num = atoi(pr2str);
-        autostart_multiplayer_level = atoi(pr2str);
         narg++;
       } else
       if ( strcasecmp(parstr,"campaign") == 0 )
       {
         strcpy(start_params.selected_campaign, pr2str);
-        strcpy(autostart_multiplayer_campaign, pr2str);
         narg++;
       } else
       if ( strcasecmp(parstr,"altinput") == 0 )

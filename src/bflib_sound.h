@@ -42,11 +42,11 @@ typedef unsigned char SoundSFXID;
 typedef long SoundEmitterID;
 /** Sound sample ID in bank table. */
 typedef short SoundSmplTblID;
-/** Volume level indicator, normal is 256. */
+/** Volume level indicator, maximum volume is 256. */
 typedef long SoundVolume;
 /** Pitch level indicator, normal is 100. */
 typedef long SoundPitch;
-/** Pan level indicator. */
+/** Pan level indicator, center is 64. */
 typedef long SoundPan;
 /** Miles Sound ID. */
 typedef long SoundMilesID;

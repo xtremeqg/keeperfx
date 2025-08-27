@@ -96,7 +96,7 @@ struct CustomMessage : Message {
 
 	void play() const noexcept override
 	{
-		play_streamed_sample(fname.c_str(), settings.mentor_volume);
+		stream_mentor_speech(fname.c_str());
 		g_recent_filenames[fname] = game.play_gameturn + duration;
 	}
 };
@@ -338,7 +338,7 @@ void script_play_message(TbBool param_is_string, const char msgtype_id, const sh
             }
             case 2: // sound effect
             {
-                play_streamed_sample(filepath, settings.sound_volume);
+                stream_sound_effect(filepath, FULL_LOUDNESS, 64, NORMAL_PITCH);
                 break;
             }
         }

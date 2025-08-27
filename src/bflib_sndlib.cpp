@@ -9,7 +9,6 @@
 #include <AL/alc.h>
 #include <AL/alext.h>
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_mixer.h>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -43,10 +42,11 @@ using ALCdevice_ptr = std::unique_ptr<ALCdevice, device_deleter>;
 using ALCcontext_ptr = std::unique_ptr<ALCcontext, context_deleter>;
 
 SoundVolume g_master_volume = 0;
+SoundVolume g_effects_volume = 0;
 SoundVolume g_music_volume = 0;
+SoundVolume g_mentor_volume = 0;
 ALCdevice_ptr g_openal_device;
 ALCcontext_ptr g_openal_context;
-std::atomic<Mix_Music *> g_mix_music;
 std::set<uint32_t> g_tick_samples;
 bool g_bb_king_mode = false;
 
@@ -454,18 +454,10 @@ void print_device_info() {
 	}
 }
 
-Mix_Chunk * g_streamed_sample = nullptr;
-std::mutex g_mix_mutex;
-
 struct queued_sample {
 	std::string fname;
 	SoundVolume volume;
 };
-
-void SDLCALL on_music_finished() {
-	// don't grab mutex or we'll deadlock, just free memory
-	Mix_FreeMusic(g_mix_music.exchange(nullptr));
-}
 
 } // local
 
@@ -477,44 +469,20 @@ extern "C" void FreeAudio() {
 	g_openal_device = nullptr;
 }
 
-extern "C" void SetSoundMasterVolume(SoundVolume volume) {
-	try {
-		// Set OpenAL listener gain to maximum so we can split up the mentor speech volume slider from the sound effects volume slider
-		alListenerf(AL_GAIN, 1.0f);
-		const auto errcode = alGetError();
-		if (errcode != AL_NO_ERROR) {
-			throw openal_error("Cannot set master volume", errcode);
-		}
-		g_master_volume = volume;
-	} catch (const std::exception & e) {
-		ERRORLOG("%s", e.what());
-	}
+extern "C" void set_master_volume(SoundVolume volume) {
+	g_master_volume = volume;
 }
 
 extern "C" void set_music_volume(SoundVolume value) {
 	g_music_volume = value;
 	SetRedbookVolume(value);
-	// convert 0..256 to 0..128
-	Mix_VolumeMusic(LbLerp(0, MIX_MAX_VOLUME, float(value) / FULL_LOUDNESS));
+	// TODO: adjust music volume
 }
 
 extern "C" TbBool play_music(const char * fname) {
-	std::lock_guard<std::mutex> guard(g_mix_mutex);
 	game.music_track = -1;
 	snprintf(game.music_fname, sizeof(game.music_fname), "%s", fname);
-	// Mix_PlayMusic will stop anything currently playing and eventually
-	// calls on_music_finished so theres no need to call Mix_FreeMusic first.
-	const auto music = Mix_LoadMUS(game.music_fname);
-	if (!music) {
-		WARNLOG("Cannot load music from %s: %s", game.music_fname, Mix_GetError());
-		return false;
-	} else if (Mix_PlayMusic(music, -1) != 0) {
-		Mix_FreeMusic(music);
-		WARNLOG("Cannot play music from %s: %s", game.music_fname, Mix_GetError());
-		return false;
-	}
-	// g_mix_music will be null here as Mix_PlayMusic ends up calling on_music_finished
-	g_mix_music = music;
+	// TODO: stream music from file
 	JUSTLOG("Playing %s", game.music_fname);
 	return true;
 }
@@ -541,7 +509,7 @@ extern "C" TbBool play_music_track(int track) {
 extern "C" void pause_music() {
 	JUSTLOG("Pausing music");
 	if (features_enabled & Ft_NoCdMusic) {
-		Mix_PauseMusic();
+		// TODO: pause music
 	} else {
 		PauseRedbookTrack();
 	}
@@ -550,7 +518,7 @@ extern "C" void pause_music() {
 extern "C" void resume_music() {
 	JUSTLOG("Resuming music");
 	if (features_enabled & Ft_NoCdMusic) {
-		Mix_ResumeMusic();
+		// TODO: resume music
 	} else {
 		ResumeRedbookTrack();
 	}
@@ -561,9 +529,7 @@ extern "C" void stop_music() {
 	game.music_track = 0;
 	memset(game.music_fname, 0, sizeof(game.music_fname));
 	if (features_enabled & Ft_NoCdMusic) {
-		if (Mix_FadingMusic() != MIX_FADING_OUT) {
-			Mix_FadeOutMusic(1000);
-		}
+		// TODO: fade out and stop music
 	} else {
 		StopRedbookTrack();
 	}
@@ -607,6 +573,10 @@ extern "C" void StopAllSamples() {
 
 extern "C" TbBool InitAudio(const SoundSettings * settings) {
 	try {
+		if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+			ERRORLOG("Unable to initialise SDL audio subsystem: %s", SDL_GetError());
+			return false;
+		}
 		if (game.flags_font & FFlg_AlexCheat) {
 			TbDate date;
 			LbDate(&date);
@@ -791,82 +761,39 @@ extern "C" SoundSFXID get_sample_sfxid(SoundSmplTblID smptbl_id, SoundBankID ban
 	return g_banks[bank_id][smptbl_id].sfx_id;
 }
 
-extern "C" int InitialiseSDLAudio()
-{
-	if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-		ERRORLOG("Unable to initialise SDL audio subsystem: %s", SDL_GetError());
-		return 0;
+extern "C" TbBool stream_sound_effect(
+	const char * fname,
+	SoundVolume volume,
+	SoundPan pan,
+	SoundPitch pitch
+) {
+	if (SoundDisabled || fname == nullptr || strlen(fname) == 0) {
+		return false;
 	}
-	int flags = Mix_Init(MIX_INIT_OGG|MIX_INIT_MP3);
-	if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0)
-	{
-		ERRORLOG("Could not open audio device for SDL mixer: %s", Mix_GetError());
-		Mix_Quit();
-		return 0;
-	}
-	Mix_ReserveChannels(1); // reserve for external speech samples
-	Mix_HookMusicFinished(on_music_finished); // register callback so we can do things
-	return flags;
+	// TODO: start playing sound sample from file
+	return true;
 }
 
-extern "C" void ShutDownSDLAudio()
-{
-	int frequency, channels;
-	unsigned short format;
-	int i = Mix_QuerySpec(&frequency, &format, &channels);
-	if (i == 0)
-	{
-		ERRORLOG("Could not query SDL mixer: %s", Mix_GetError());
-	}
-	while (i > 0)
-	{
-		Mix_CloseAudio();
-		i--;
-	}
-	while (Mix_Init(0))
-	{
-		Mix_Quit();
-	}
-}
-
-extern "C" TbBool play_streamed_sample(const char* fname, SoundVolume volume)
+extern "C" TbBool stream_mentor_speech(const char * fname)
 {
 	if (SoundDisabled || fname == nullptr || strlen(fname) == 0) {
 		return false;
 	}
-	const auto sample = Mix_LoadWAV(fname);
-	if (sample == nullptr) {
-		ERRORLOG("Cannot load \"%s\": %s", fname, Mix_GetError());
-		return false;
-	}
-	// SoundVolume ranges 0..255 but MIX_MAX_VOLUME ranges 0..128
-	Mix_VolumeChunk(sample, volume / 2);
-	if (Mix_PlayChannel(MIX_SPEECH_CHANNEL, sample, 0) != 0) {
-		Mix_FreeChunk(sample);
-		ERRORLOG("Cannot play \"%s\": %s", fname, Mix_GetError());
-		return false;
-	}
-	std::lock_guard<std::mutex> guard(g_mix_mutex);
-	const auto old_sample = std::exchange(g_streamed_sample, sample);
-	if (old_sample) {
-		Mix_FreeChunk(old_sample);
-	}
+	// TODO: start playing sound sample from file
 	return true;
 }
 
 extern "C" void stop_streamed_samples()
 {
-	Mix_HaltChannel(MIX_SPEECH_CHANNEL);
-	std::lock_guard<std::mutex> guard(g_mix_mutex);
-	const auto old_sample = std::exchange(g_streamed_sample, nullptr);
-	if (old_sample) {
-		Mix_FreeChunk(g_streamed_sample);
-	}
+	// TODO: stop playing sound sample from file
 }
 
-extern "C" void set_streamed_sample_volume(SoundVolume volume) {
-	// SoundVolume ranges 0..255 but MIX_MAX_VOLUME ranges 0..128
-	Mix_VolumeChunk(g_streamed_sample, volume / 2);
+extern "C" void set_mentor_volume(SoundVolume volume) {
+	g_mentor_volume = volume;
+}
+
+extern "C" void set_effects_volume(SoundVolume volume) {
+	g_effects_volume = volume;
 }
 
 extern "C" void toggle_bbking_mode() {

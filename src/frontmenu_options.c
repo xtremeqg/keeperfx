@@ -43,8 +43,6 @@
 #include "sounds.h"
 #include "post_inc.h"
 
-#include <SDL2/SDL_mixer.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -301,31 +299,32 @@ int make_audio_slider_nonlinear(int a)
     return CEILING(LbLerp(0, 255, clamped));
 }
 
-void gui_set_sound_volume(struct GuiButton *gbtn)
+void gui_set_effects_volume(struct GuiButton *gbtn)
 {
-    const int new_val = make_audio_slider_nonlinear(gbtn->slide_val);
+    const int old_val = settings.effects_volume;
+    settings.effects_volume = make_audio_slider_nonlinear(gbtn->slide_val);
+    save_settings();
+    set_effects_volume(FULL_LOUDNESS * ((float) settings.effects_volume / 127));
     if (gbtn->id_num == BID_SOUND_VOL)
     {
-        if (new_val != settings.sound_volume) {
+        if (old_val != settings.effects_volume) {
             do_sound_menu_click();
         }
     }
-    settings.sound_volume = new_val;
-    save_settings();
-    SetSoundMasterVolume(new_val);
 }
 
 void gui_set_music_volume(struct GuiButton *gbtn)
 {
     settings.music_volume = make_audio_slider_nonlinear(gbtn->content.lval);
     save_settings();
-    set_music_volume(settings.music_volume);
+    set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
 }
 
 void gui_set_mentor_volume(struct GuiButton *gbtn)
 {
     settings.mentor_volume = make_audio_slider_nonlinear(gbtn->content.lval);
     save_settings();
+    set_mentor_volume(FULL_LOUDNESS * ((float) settings.mentor_volume / 127));
 }
 
 void gui_video_cluedo_maintain(struct GuiButton *gbtn)
@@ -401,7 +400,7 @@ void init_video_menu(struct GuiMenu *gmnu)
 void init_audio_menu(struct GuiMenu *gmnu)
 {
     get_gui_button_init(gmnu, BID_MUSIC_VOL)->content.lval = make_audio_slider_linear(settings.music_volume);
-    get_gui_button_init(gmnu, BID_SOUND_VOL)->content.lval = make_audio_slider_linear(settings.sound_volume);
+    get_gui_button_init(gmnu, BID_SOUND_VOL)->content.lval = make_audio_slider_linear(settings.effects_volume);
     get_gui_button_init(gmnu, BID_MENTOR_VOL)->content.lval = make_audio_slider_linear(settings.mentor_volume);
 }
 /******************************************************************************/

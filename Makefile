@@ -351,7 +351,7 @@ CU_OBJS = \
 
 # include and library directories
 LINKLIB = -mwindows \
-	-L"sdl/lib" -lSDL2 -lSDL2_mixer -lSDL2_net -lSDL2_image \
+	-L"sdl/lib" -lSDL2 -lSDL2_net -lSDL2_image \
 	-L"deps/ffmpeg/libavformat" -lavformat \
 	-L"deps/ffmpeg/libavcodec" -lavcodec \
 	-L"deps/ffmpeg/libswresample" -lswresample \

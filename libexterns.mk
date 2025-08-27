@@ -24,9 +24,9 @@ include prebuilds.mk
 
 .PHONY: clean-libsdl deep-clean-libsdl
 
-.INTERMEDIATE: libsdl libsdlnet libsdlmixer libsdlimage
+.INTERMEDIATE: libsdl libsdlnet libsdlimage
 
-libexterns: libsdl libsdlnet libsdlmixer libsdlimage
+libexterns: libsdl libsdlnet libsdlimage
 	touch libexterns
 
 clean-libexterns: clean-libsdl
@@ -108,57 +108,6 @@ sdl/$(SDL_NET_PACKAGE):
 	-$(ECHO) 'Downloading package: $@'
 	$(MKDIR) "$(@D)"
 	curl -L -o "$@.dl" "$(SDL_NET_DOWNLOAD)"
-	unzip -qt "$@.dl"
-	$(MV) "$@.dl" "$@"
-	-$(ECHO) 'Finished downloading: $@'
-	-$(ECHO) ' '
-
-endif
-
-##################
-
-ifneq (,$(findstring .tar.gz,$(SDL_MIXER_PACKAGE)))
-
-libsdlmixer: sdl/lib/libSDL2_mixer.lib
-
-sdl/lib/libSDL2_mixer.lib: sdl/$(SDL_MIXER_PACKAGE)
-	-$(ECHO) 'Extracting package: $<'
-	$(MKDIR) sdl/lib sdl/include/SDL2
-	cd "$(<D)"; \
-	tar -xzf "$(<F)"
-	$(MV) sdl/SDL2_mixer-*/$(ARCH)/include/SDL2/* sdl/include/SDL2/
-	$(CP) -r sdl/SDL2_mixer-*/$(ARCH)/lib/* sdl/lib/
-	$(CP) sdl/SDL2_mixer-*/$(ARCH)/bin/SDL2_mixer.dll sdl/for_final_package/
-	-$(ECHO) 'Finished extracting: $<'
-	-$(ECHO) ' '
-
-sdl/$(SDL_MIXER_PACKAGE):
-	-$(ECHO) 'Downloading package: $@'
-	$(MKDIR) "$(@D)"
-	curl -L -o "$@.dl" "$(SDL_MIXER_DOWNLOAD)"
-	tar -tzf "$@.dl"
-	$(MV) "$@.dl" "$@"
-	-$(ECHO) 'Finished downloading: $@'
-	-$(ECHO) ' '
-
-else
-
-libsdlmixer: sdl/lib/SDL2_mixer.lib
-
-sdl/lib/SDL2_mixer.lib: sdl/$(SDL_MIXER_PACKAGE)
-	-$(ECHO) 'Extracting package: $<'
-	$(MKDIR) sdl/lib sdl/include/SDL2
-	cd "$(<D)"; \
-	unzip -DD -qo "$(<F)"
-	$(MV) sdl/SDL2_mixer-*/include/* sdl/include/SDL2/
-	$(MV) sdl/SDL2_mixer-*/lib/x86/* sdl/lib/
-	-$(ECHO) 'Finished extracting: $<'
-	-$(ECHO) ' '
-
-sdl/$(SDL_MIXER_PACKAGE):
-	-$(ECHO) 'Downloading package: $@'
-	$(MKDIR) "$(@D)"
-	curl -L -o "$@.dl" "$(SDL_MIXER_DOWNLOAD)"
 	unzip -qt "$@.dl"
 	$(MV) "$@.dl" "$@"
 	-$(ECHO) 'Finished downloading: $@'

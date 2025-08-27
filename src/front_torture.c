@@ -368,7 +368,7 @@ void fronttorture_update(void)
             doorsnd->current_volume = volume;
             if (volume > 0)
             {
-              SetSampleVolume(emit_id, door->smptbl_id, (settings.sound_volume * volume) / FULL_LOUDNESS);
+              SetSampleVolume(emit_id, door->smptbl_id, volume * ((float) settings.effects_volume / 127));
             }
         }
     }

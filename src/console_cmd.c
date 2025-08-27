@@ -448,7 +448,7 @@ TbBool cmd_ver(PlayerNumber plyr_idx, char * args)
 
 TbBool cmd_volume(PlayerNumber plyr_idx, char * args)
 {
-    targeted_message_add(MsgType_Player, plyr_idx, plyr_idx, GUI_MESSAGES_DELAY, "%s: %d %s: %d", get_string(340), settings.sound_volume, get_string(341), settings.music_volume);
+    targeted_message_add(MsgType_Player, plyr_idx, plyr_idx, GUI_MESSAGES_DELAY, "%s: %d %s: %d", get_string(340), settings.effects_volume, get_string(341), settings.music_volume);
     return true;
 }
 
@@ -462,12 +462,9 @@ TbBool cmd_volume_sound(PlayerNumber plyr_idx, char * args)
             targeted_message_add(MsgType_Player, plyr_idx, plyr_idx, GUI_MESSAGES_DELAY, "parameter 1 requires a number");
         return false;
     }
-    settings.sound_volume = atoi(pr2str);
-    if (settings.sound_volume > 127) {
-        settings.sound_volume = 127;
-    }
+    settings.effects_volume = clamp(atoi(pr2str), 0, 127);
     save_settings();
-    SetSoundMasterVolume(settings.sound_volume);
+    set_effects_volume(FULL_LOUDNESS * ((float) settings.effects_volume / 127));
     return true;
 }
 
@@ -481,12 +478,9 @@ TbBool cmd_volume_music(PlayerNumber plyr_idx, char * args)
             targeted_message_add(MsgType_Player, plyr_idx, plyr_idx, GUI_MESSAGES_DELAY, "parameter 1 requires a number");
         return false;
     }
-    settings.music_volume = atoi(pr2str);
-    if (settings.music_volume > 127) {
-        settings.music_volume = 127;
-    }
+    settings.music_volume = clamp(atoi(pr2str), 0, 127);
     save_settings();
-    set_music_volume(settings.music_volume);
+    set_music_volume(FULL_LOUDNESS * ((float) settings.music_volume / 127));
     return true;
 }
 

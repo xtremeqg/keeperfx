@@ -609,7 +609,7 @@ void play_non_3d_sample(SoundSmplTblID sample_idx)
         return;
 
     // Set sound volume setting
-    SoundVolume adjusted_volume = LbLerp(0, FULL_LOUDNESS, (float)settings.sound_volume/127.0); // [0-127] rescaled to [0-256]
+    SoundVolume adjusted_volume = FULL_LOUDNESS * ((float) settings.effects_volume / 127); // [0-127] rescaled to [0-256]
 
     if (Non3DEmitter != 0)
       if (!sound_emitter_in_use(Non3DEmitter))
@@ -634,7 +634,7 @@ void play_non_3d_sample_no_overlap(SoundSmplTblID smpl_idx)
         return;
 
     // Set sound volume setting
-    SoundVolume adjusted_volume = LbLerp(0, FULL_LOUDNESS, (float)settings.sound_volume/127.0); // [0-127] rescaled to [0-256]
+    SoundVolume adjusted_volume = FULL_LOUDNESS * ((float) settings.effects_volume / 127); // [0-127] rescaled to [0-256]
 
     if (Non3DEmitter != 0)
     {
@@ -662,7 +662,7 @@ void play_atmos_sound(SoundSmplTblID smpl_idx)
         return;
 
     // Apply sound volume setting to atmospheric volume
-    SoundVolume volume_scale = LbLerp(0, FULL_LOUDNESS, (float)settings.sound_volume/127.0); // [0-127] rescaled to [0-256]
+    SoundVolume volume_scale = FULL_LOUDNESS * ((float) settings.effects_volume / 127.0); // [0-127] rescaled to [0-256]
     SoundVolume adjusted_volume = (atmos_sound_volume * volume_scale) / FULL_LOUDNESS;
 
     int ATMOS_SOUND_PITCH = (73 + (UNSYNC_RANDOM(10) * 6));
@@ -797,10 +797,7 @@ long speech_sample_playing(void)
          return false;
      }
      SYNCDBG(17,"Starting");
-     if (Mix_Playing(MIX_SPEECH_CHANNEL))
-     {
-         return true;
-     }
+     // TODO: check whether speech is already playing
      long sp_emiter = SpeechEmitter;
      if (sp_emiter != 0)
      {
@@ -838,16 +835,16 @@ long play_speech_sample(SoundSmplTblID smptbl_id)
       }
     }
     SpeechEmitter = sp_emiter;
-    long adjusted_volume = LbLerp(0, FULL_LOUDNESS, (float)settings.mentor_volume/127.0); // [0-127] rescaled to [0-256]
+    const long volume = FULL_LOUDNESS * ((float) settings.mentor_volume / 127); // [0-127] rescaled to [0-256]
 
     if (sp_emiter != 0)
     {
       if (S3DEmitterHasFinishedPlaying(sp_emiter))
-        if (S3DAddSampleToEmitterPri(SpeechEmitter, smptbl_id, 1, 100, adjusted_volume, 0, 3, 8, 2147483647))
+        if (S3DAddSampleToEmitterPri(SpeechEmitter, smptbl_id, 1, NORMAL_PITCH, volume, 0, 3, 8, INT32_MAX))
           return true;
       return false;
     }
-    sp_emiter = S3DCreateSoundEmitterPri(0, 0, 0, smptbl_id, 1, 100, adjusted_volume, 0, 8, 2147483647);
+    sp_emiter = S3DCreateSoundEmitterPri(0, 0, 0, smptbl_id, 1, NORMAL_PITCH, volume, 0, 8, INT32_MAX);
     SpeechEmitter = sp_emiter;
     if (sp_emiter == 0)
     {

@@ -78,7 +78,6 @@ extern unsigned long played_good_descriptive_speech;
 extern struct TbSpriteSheet *map_flag;
 extern struct TbSpriteSheet *map_font;
 extern struct TbSpriteSheet *map_hand;
-extern long map_sound_fade;
 extern unsigned char *map_screen;
 extern long fe_net_level_selected;
 extern long net_map_limp_time;

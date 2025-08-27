@@ -52,7 +52,6 @@ PKG_HVLOGBIN_MAP = $(PKG_HVLOGBIN:%.exe=%.map)
 PKG_DOCS = pkg/keeperfx_readme.txt
 PKG_DLL = \
 	pkg/SDL2_net.dll \
-	pkg/SDL2_mixer.dll \
 	pkg/SDL2_image.dll \
 	pkg/SDL2.dll
 PKG_FILES = \
@@ -75,7 +74,7 @@ PKG_FILES = \
 
 pkg pkg/creatrs pkg/fxdata pkg/campgns pkg/fxdata/lua $(PKG_MAPPACK_DIRS) $(PKG_CAMPAIGN_DIRS) $(PKG_FXDATA_DIRS):
 	$(MKDIR) $@
-	
+
 pkg/fxdata/lua/%.lua: config/fxdata/lua/%.lua
 	@mkdir -p $(dir $@)
 	$(CP) $^ $@
@@ -133,9 +132,6 @@ pkg/levels/%.txt: levels/%.txt | $(PKG_MAPPACK_DIRS)
 	$(CP) $^ $@
 
 pkg/SDL2_net.dll: sdl/for_final_package/SDL2_net.dll | pkg
-	$(CP) $^ $@
-
-pkg/SDL2_mixer.dll: sdl/for_final_package/SDL2_mixer.dll | pkg
 	$(CP) $^ $@
 
 pkg/SDL2_image.dll: sdl/for_final_package/SDL2_image.dll | pkg

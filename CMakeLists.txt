@@ -32,7 +32,6 @@ include_directories($(${CMAKE_BINARY_DIR}))
 
 find_package(SDL2 CONFIG REQUIRED)
 find_package(SDL2_image CONFIG REQUIRED)
-find_package(SDL2_mixer CONFIG REQUIRED)
 find_package(SDL2_net CONFIG REQUIRED)
 
 # Global definitions.
@@ -86,8 +85,6 @@ target_link_libraries(keeperfx
     PRIVATE
     $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>)
 target_link_libraries(keeperfx
-    PRIVATE $<IF:$<TARGET_EXISTS:SDL2_mixer::SDL2_mixer>,SDL2_mixer::SDL2_mixer,SDL2_mixer::SDL2_mixer-static>)
-target_link_libraries(keeperfx
     PRIVATE $<IF:$<TARGET_EXISTS:SDL2_net::SDL2_net>,SDL2_net::SDL2_net,SDL2_net::SDL2_net-static>)
 target_link_libraries(keeperfx
     PRIVATE $<IF:$<TARGET_EXISTS:SDL2_image::SDL2_image>,SDL2_image::SDL2_image,SDL2_image::SDL2_image-static>)
@@ -95,8 +92,6 @@ target_link_libraries(keeperfx
 target_link_libraries(keeperfx_hvlog
     PRIVATE
     $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>)
-target_link_libraries(keeperfx_hvlog
-    PRIVATE $<IF:$<TARGET_EXISTS:SDL2_mixer::SDL2_mixer>,SDL2_mixer::SDL2_mixer,SDL2_mixer::SDL2_mixer-static>)
 target_link_libraries(keeperfx_hvlog
     PRIVATE $<IF:$<TARGET_EXISTS:SDL2_net::SDL2_net>,SDL2_net::SDL2_net,SDL2_net::SDL2_net-static>)
 target_link_libraries(keeperfx_hvlog

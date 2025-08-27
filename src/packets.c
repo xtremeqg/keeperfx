@@ -307,12 +307,10 @@ void process_pause_packet(long curr_pause, long new_pause)
       {
         if ((game.operation_flags & GOF_Paused) != 0)
         {
-          SetSoundMasterVolume(settings.sound_volume >> 1);
-          set_music_volume(settings.music_volume >> 1);
+          set_master_volume((FULL_LOUDNESS / 2) * ((float) settings.master_volume / 127));
         } else
         {
-          SetSoundMasterVolume(settings.sound_volume);
-          set_music_volume(settings.music_volume);
+          set_master_volume(FULL_LOUDNESS * ((float) settings.master_volume / 127));
         }
       }
       if ((game.operation_flags & GOF_Paused) != 0)
@@ -537,8 +535,8 @@ TbBool message_text_key_add(char * message, long maxlen, TbKeyCode key, TbKeyMod
             case ';':
             case '(':
             case ')':
-            case '.': 
-            case '_': 
+            case '.':
+            case '_':
             case '\'':
             case '+':
             case '=':
@@ -1405,7 +1403,7 @@ void process_players_creature_control_packet_control(long idx)
             }
         }
     }
-    
+
     // First person looking speed and limits are adjusted here. (pckt contains the base mouse movement inputs)
     struct CreatureModelConfig* crconf = creature_stats_get_from_thing(cctng);
     long maxTurnSpeed = crconf->max_turning_speed;
@@ -1420,7 +1418,7 @@ void process_players_creature_control_packet_control(long idx)
     } else if (horizontalTurnSpeed > maxTurnSpeed) {
         horizontalTurnSpeed = maxTurnSpeed;
     }
-    
+
     // Vertical look
     long verticalTurnSpeed = pckt->pos_y;
     if (verticalTurnSpeed < -maxTurnSpeed) {
@@ -1855,20 +1853,20 @@ void apply_default_flee_and_imprison_setting(void)
     if (!player_exists(player) || game.packet_load_enable) {
         return;
     }
-    
+
     struct Dungeon* dungeon = get_dungeon(player->id_number);
     unsigned short tendencies_to_toggle = 0;
-    
+
     TbBool current_imprison_state = (dungeon->creature_tendencies & 0x01) != 0;
     if (IMPRISON_BUTTON_DEFAULT != current_imprison_state) {
         tendencies_to_toggle |= CrTend_Imprison;
     }
-    
+
     TbBool current_flee_state = (dungeon->creature_tendencies & 0x02) != 0;
     if (FLEE_BUTTON_DEFAULT != current_flee_state) {
         tendencies_to_toggle |= CrTend_Flee;
     }
-    
+
     if (tendencies_to_toggle) {
         set_players_packet_action(player, PckA_ToggleTendency, tendencies_to_toggle, 0, 0, 0);
     }
