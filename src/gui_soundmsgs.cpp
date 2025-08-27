@@ -333,7 +333,7 @@ void script_play_message(TbBool param_is_string, const char msgtype_id, const sh
         {
             case 1: // speech message
             {
-                output_custom_message(filepath, settings.mentor_volume);
+                output_custom_message(filepath, 0);
                 break;
             }
             case 2: // sound effect
