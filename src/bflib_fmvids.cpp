@@ -5,6 +5,7 @@
 #include "bflib_keybrd.h"
 #include "bflib_vidsurface.h"
 #include "bflib_fileio.h"
+#include "bflib_sndlib.h"
 #include "kjm_input.h"
 
 // See: https://trac.ffmpeg.org/ticket/3626
@@ -273,33 +274,24 @@ struct movie_t {
 	AVCodecContext * m_video_context = nullptr;
 	AVPacket * m_packet = nullptr;
 	AVFrame * m_frame = nullptr;
-	SwrContext * m_resampler = nullptr;
 	time_point m_video_start;
 	AVRational m_time_base;
 	SDL_AudioDeviceID m_audio_device = 0;
+	FFmpegStream * m_ffmpeg_stream = nullptr;
 
 	int m_audio_index;
 	int m_video_index;
 	int m_flags;
 
-	int m_output_audio_channels;
-	int m_output_audio_frequency;
-	AVChannelLayout m_output_audio_layout;
-	AVSampleFormat m_output_audio_format;
-
 	movie_t(const char * filename, const int flags) {
 		m_flags = flags;
 		m_video_start = time_point();
 		open_input(filename);
-		open_audio_device();
 		find_stream_info();
 		setup_audio();
 		setup_video();
 		make_packet();
 		make_frame();
-		if (m_audio_context) {
-			make_resampler();
-		}
 		m_time_base = m_format_context->streams[m_video_index]->time_base;
 	}
 
@@ -319,12 +311,12 @@ struct movie_t {
 		if (m_packet) {
 			av_packet_free(&m_packet);
 		}
-		if (m_resampler) {
-			swr_free(&m_resampler);
-		}
 		if (m_audio_device > 0) {
 			SDL_CloseAudioDevice(m_audio_device);
 			m_audio_device = 0;
+		}
+		if (m_ffmpeg_stream) {
+			ffmpeg_stream_close(m_ffmpeg_stream);
 		}
 	}
 
@@ -332,54 +324,6 @@ struct movie_t {
 		if (avformat_open_input(&m_format_context, filename, nullptr, nullptr) != 0) {
 			throw std::runtime_error("Cannot open source file");
 		}
-	}
-
-	AVSampleFormat sdl_to_ffmpeg_format(SDL_AudioFormat format) {
-		switch (format) {
-			case AUDIO_S8: return AV_SAMPLE_FMT_U8;
-			case AUDIO_S16SYS: return AV_SAMPLE_FMT_S16;
-			case AUDIO_S32SYS: return AV_SAMPLE_FMT_S32;
-			case AUDIO_F32SYS: return AV_SAMPLE_FMT_FLT;
-			default: return AV_SAMPLE_FMT_NONE;
-		}
-	}
-
-	AVChannelLayout channels_to_ffmpeg_layout(int channels) {
-		switch (channels) {
-			case 1: return AV_CHANNEL_LAYOUT_MONO;
-			case 2: return AV_CHANNEL_LAYOUT_STEREO;
-			case 3: return AV_CHANNEL_LAYOUT_SURROUND;
-			case 4: return AV_CHANNEL_LAYOUT_QUAD;
-			case 5: return AV_CHANNEL_LAYOUT_4POINT1;
-			case 6: return AV_CHANNEL_LAYOUT_5POINT1;
-			case 7: return AV_CHANNEL_LAYOUT_6POINT1;
-			case 8: return AV_CHANNEL_LAYOUT_7POINT1;
-			default: return {};
-		}
-	}
-
-	void open_audio_device() {
-        if (!flag_is_set(m_flags, SMK_NoSound))
-        {
-            SDL_AudioSpec desired, obtained;
-            desired.freq = 44100;
-            desired.format = AUDIO_F32SYS;
-            desired.channels = 2;
-            desired.silence = 0;
-            desired.samples = 0;
-            desired.padding = 0;
-            desired.size = 0;
-            desired.callback = nullptr;
-            desired.userdata = nullptr;
-            m_audio_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_ANY_CHANGE);
-            if (m_audio_device <= 0) {
-                throw std::runtime_error("Cannot open audio device");
-            }
-            m_output_audio_channels = obtained.channels;
-            m_output_audio_frequency = obtained.freq;
-            m_output_audio_format = sdl_to_ffmpeg_format(obtained.format);
-            m_output_audio_layout = channels_to_ffmpeg_layout(obtained.channels);
-        }
 	}
 
 	void find_stream_info() {
@@ -427,6 +371,12 @@ struct movie_t {
                     m_audio_context = make_context(m_audio_codec);
                     copy_parameters(m_audio_context, m_audio_stream);
                     open_codec(m_audio_context, m_audio_codec);
+					m_ffmpeg_stream = ffmpeg_stream_open(
+						AudioType::AT_FMV,
+						&m_audio_context->ch_layout,
+						m_audio_context->sample_fmt,
+						m_audio_context->sample_rate
+					);
                 }
             }
         }
@@ -461,60 +411,12 @@ struct movie_t {
 		}
 	}
 
-	void make_resampler() {
-		if (swr_alloc_set_opts2(
-			&m_resampler,
-			&m_output_audio_layout,
-			m_output_audio_format,
-			m_output_audio_frequency,
-			&m_audio_context->ch_layout,
-			m_audio_context->sample_fmt,
-			m_audio_context->sample_rate,
-			0,
-			nullptr
-		) != 0) {
-			throw std::runtime_error("Cannot create resampler");
-		}
-		if (swr_init(m_resampler) != 0) {
-			throw std::runtime_error("Could not initialize resampler");
-		}
-	}
-
 	duration time_since_video_start() {
 		if (m_video_start == time_point()) {
 			m_video_start = clock::now();
 			return duration();
 		}
 		return clock::now() - m_video_start;
-	}
-
-	void output_audio_frame() {
-		const auto sample_size = av_get_bytes_per_sample(m_output_audio_format);
-		const auto buffer_samples = swr_get_out_samples(m_resampler, m_frame->nb_samples);
-		uint8_t * buffer = nullptr;
-		av_samples_alloc(
-			&buffer,
-			nullptr,
-			m_output_audio_channels,
-			buffer_samples,
-			m_output_audio_format,
-			1
-		);
-		const auto num_samples = m_output_audio_channels * swr_convert(
-			m_resampler,
-			&buffer,
-			buffer_samples,
-#if LIBSWRESAMPLE_VERSION_INT >= AV_VERSION_INT(4, 4, 100)
-			// since 4.4.100, swr_convert expects a const pointer
-			const_cast<const uint8_t **>(m_frame->data),
-#else
-			m_frame->data,
-#endif
-			m_frame->nb_samples
-		);
-		SDL_QueueAudio(m_audio_device, buffer, num_samples * sample_size);
-		SDL_PauseAudioDevice(m_audio_device, 0);
-		av_freep(&buffer);
 	}
 
 	void output_video_frame() {
@@ -550,7 +452,9 @@ struct movie_t {
 					return false;
 				}
 			}
-			output_audio_frame();
+			if (m_ffmpeg_stream) {
+				ffmpeg_stream_append(m_ffmpeg_stream, m_frame);
+			}
 		}
 	}
 
@@ -581,6 +485,7 @@ struct movie_t {
 				return true;
 			} else if (lbKeyOn[KC_ESCAPE] || lbKeyOn[KC_RETURN] || lbKeyOn[KC_SPACE] || lbDisplay.LeftButton) {
 				clear_key_pressed(lbInkey);
+				ffmpeg_stream_stop(m_ffmpeg_stream);
 				return false;
 			}
 		}

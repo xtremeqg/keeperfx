@@ -32,6 +32,19 @@
 extern "C" {
 #endif
 
+// See: https://trac.ffmpeg.org/ticket/3626
+#include <libavformat/avformat.h>
+
+struct FFmpegStream;
+
+enum AudioType {
+    AT_INVALID = 0,
+    AT_FMV = 1,
+    AT_SFX = 2,
+    AT_MENTOR = 3,
+    AT_MUSIC = 4,
+};
+
 void FreeAudio(void);
 void set_master_volume(SoundVolume);
 TbBool GetSoundInstalled(void);
@@ -52,6 +65,10 @@ TbBool play_music_track(int);
 void pause_music(void);
 void resume_music(void);
 void stop_music(void);
+struct FFmpegStream * ffmpeg_stream_open(enum AudioType, const AVChannelLayout *, enum AVSampleFormat, int sample_rate);
+void ffmpeg_stream_append(struct FFmpegStream *, const AVFrame *); // add audio frame for playback
+void ffmpeg_stream_stop(struct FFmpegStream *); // stop playback of audio
+void ffmpeg_stream_close(struct FFmpegStream *); // free stream resources
 
 #ifdef __cplusplus
 }

@@ -5,6 +5,12 @@
 #include "bflib_datetm.h"
 #include "bflib_sound.h"
 #include "bflib_fileio.h"
+
+// See: https://trac.ffmpeg.org/ticket/3626
+extern "C" {
+	#include <libswresample/swresample.h>
+}
+
 #include <AL/al.h>
 #include <AL/alc.h>
 #include <AL/alext.h>
@@ -21,6 +27,9 @@
 #include <mutex>
 #include <atomic>
 #include <set>
+#include <list>
+#include <algorithm>
+
 #include "post_inc.h"
 
 namespace {
@@ -49,6 +58,11 @@ ALCdevice_ptr g_openal_device;
 ALCcontext_ptr g_openal_context;
 std::set<uint32_t> g_tick_samples;
 bool g_bb_king_mode = false;
+SDL_AudioDeviceID g_sdl_device = 0;
+Uint8 g_device_num_channels = 0;
+int g_device_sample_rate = 0;
+SDL_AudioFormat g_device_format = 0;
+std::mutex g_sdl_lock;
 
 enum source_flags {
 	bb_king_mode = 1,
@@ -432,32 +446,480 @@ void load_sound_banks() {
 	g_banks[1] = load_sound_bank(spc_fname);
 }
 
-void print_device_info() {
-	if (alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT")) {
-		const auto devices = alcGetString(nullptr, ALC_ALL_DEVICES_SPECIFIER);
-		JUSTLOG("Available audio devices:");
-		for (auto device = devices; device[0] != 0; device += strlen(device)) {
-			JUSTLOG("  %s", device);
-		}
-		const auto default_device = alcGetString(nullptr, ALC_DEFAULT_ALL_DEVICES_SPECIFIER);
-		JUSTLOG("Default audio device: %s", default_device);
-	} else if (alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT")) {
-		const auto devices = alcGetString(nullptr, ALC_DEVICE_SPECIFIER);
-		JUSTLOG("Available audio devices:");
-		for (auto device = devices; device[0] != 0; device += strlen(device)) {
-			JUSTLOG("  %s", device);
-		}
-		const auto default_device = alcGetString(nullptr, ALC_DEFAULT_DEVICE_SPECIFIER);
-		JUSTLOG("Default audio device: %s", default_device);
-	} else {
-		// Cannot enumerate devices :(
-	}
-}
-
 struct queued_sample {
 	std::string fname;
 	SoundVolume volume;
 };
+
+struct SampleBuffer {
+
+	uint8_t * data = nullptr;
+	size_t offset = 0;
+	size_t size = 0;
+
+	inline SampleBuffer(uint8_t * _data, size_t _size)
+	: data(_data), size(_size) {}
+
+	inline ~SampleBuffer() noexcept {
+		av_freep(&data);
+	}
+
+	SampleBuffer(const SampleBuffer &) = delete;
+	SampleBuffer & operator=(const SampleBuffer &) = delete;
+
+	inline SampleBuffer(SampleBuffer && other) noexcept
+	: data(std::exchange(other.data, nullptr))
+	, offset(std::exchange(other.offset, 0))
+	, size(std::exchange(other.size, 0)) {}
+
+	inline SampleBuffer & operator=(SampleBuffer && other) noexcept {
+		data = std::exchange(other.data, nullptr);
+		offset = std::exchange(other.offset, 0);
+		size = std::exchange(other.size, 0);
+		return *this;
+	}
+};
+
+AVSampleFormat SDL_to_FFmpeg_format(SDL_AudioFormat format) {
+	switch (format) {
+		case AUDIO_S8: return AV_SAMPLE_FMT_U8;
+		case AUDIO_S16SYS: return AV_SAMPLE_FMT_S16;
+		case AUDIO_S32SYS: return AV_SAMPLE_FMT_S32;
+		case AUDIO_F32SYS: return AV_SAMPLE_FMT_FLT;
+		default: return AV_SAMPLE_FMT_NONE;
+	}
+}
+
+SDL_AudioFormat FFmpeg_to_SDL_format(AVSampleFormat format) {
+	switch (format) {
+		case AV_SAMPLE_FMT_U8: return AUDIO_S8;
+		case AV_SAMPLE_FMT_S16: return AUDIO_S16SYS;
+		case AV_SAMPLE_FMT_S32: return AUDIO_S32SYS;
+		case AV_SAMPLE_FMT_FLT: return AUDIO_F32SYS;
+		default: return 0;
+	}
+}
+
+AVChannelLayout channo_to_FFmpeg_layout(int num_channels) {
+	switch (num_channels) {
+		case 1: return AV_CHANNEL_LAYOUT_MONO;
+		case 2: return AV_CHANNEL_LAYOUT_STEREO;
+		case 3: return AV_CHANNEL_LAYOUT_SURROUND;
+		case 4: return AV_CHANNEL_LAYOUT_QUAD;
+		case 5: return AV_CHANNEL_LAYOUT_4POINT1;
+		case 6: return AV_CHANNEL_LAYOUT_5POINT1;
+		case 7: return AV_CHANNEL_LAYOUT_6POINT1;
+		case 8: return AV_CHANNEL_LAYOUT_7POINT1;
+		default: return {};
+	}
+}
+
+auto SDL_AudioFormat_to_string(SDL_AudioFormat format) {
+
+	switch (format) {
+		case AUDIO_U8: return "AUDIO_U8";
+		case AUDIO_S8: return "AUDIO_S8";
+		case AUDIO_U16LSB: return (AUDIO_U16LSB == AUDIO_U16SYS) ? "AUDIO_U16SYS" : "AUDIO_U16LSB";
+		case AUDIO_U16MSB: return (AUDIO_U16MSB == AUDIO_U16SYS) ? "AUDIO_U16SYS" : "AUDIO_U16MSB";
+		case AUDIO_S16LSB: return (AUDIO_S16LSB == AUDIO_S16SYS) ? "AUDIO_S16SYS" : "AUDIO_S16LSB";
+		case AUDIO_S16MSB: return (AUDIO_S16MSB == AUDIO_S16SYS) ? "AUDIO_S16SYS" : "AUDIO_S16MSB";
+		case AUDIO_S32LSB: return (AUDIO_S32LSB == AUDIO_S32SYS) ? "AUDIO_S32SYS" : "AUDIO_S32LSB";
+		case AUDIO_S32MSB: return (AUDIO_S32MSB == AUDIO_S32SYS) ? "AUDIO_S32SYS" : "AUDIO_S32MSB";
+		case AUDIO_F32LSB: return (AUDIO_F32LSB == AUDIO_F32SYS) ? "AUDIO_F32SYS" : "AUDIO_F32LSB";
+		case AUDIO_F32MSB: return (AUDIO_F32MSB == AUDIO_F32SYS) ? "AUDIO_F32SYS" : "AUDIO_F32MSB";
+		default: return "unknown";
+	}
+}
+
+class Resampler {
+protected:
+	SwrContext * m_resampler = nullptr;
+
+public:
+
+	inline Resampler() = default;
+
+	Resampler(
+		const AVChannelLayout & input_layout, AVSampleFormat input_format, int input_sample_rate,
+		const AVChannelLayout & output_layout, AVSampleFormat output_format, int output_sample_rate
+	) {
+		const auto result = swr_alloc_set_opts2(
+			&m_resampler,
+			&output_layout, output_format, output_sample_rate,
+			&input_layout, input_format, input_sample_rate,
+			0, nullptr
+		);
+		if (result != 0) {
+			throw std::runtime_error("Cannot allocate resampler");
+		}
+		if (swr_init(m_resampler) != 0) {
+			swr_free(&m_resampler);
+			throw std::runtime_error("Cannot initialize resampler");
+		}
+		JUSTLOG("Created resampler for %d -> %d channels, %d Hz -> %d Hz, %s -> %s",
+			input_layout.nb_channels,
+			output_layout.nb_channels,
+			input_sample_rate,
+			output_sample_rate,
+			SDL_AudioFormat_to_string(FFmpeg_to_SDL_format(input_format)),
+			SDL_AudioFormat_to_string(FFmpeg_to_SDL_format(output_format))
+		);
+	}
+
+	inline ~Resampler() noexcept {
+		swr_free(&m_resampler);
+	}
+
+	Resampler(const Resampler &) = delete;
+	Resampler & operator=(const Resampler &) = delete;
+
+	inline Resampler(Resampler && other) noexcept
+	: m_resampler(std::exchange(other.m_resampler, nullptr)) {}
+
+	inline Resampler & operator=(Resampler && other) noexcept {
+		m_resampler = std::exchange(other.m_resampler, nullptr);
+		return *this;
+	}
+
+	auto expected_samples(int input_samples) const {
+		return swr_get_out_samples(m_resampler, input_samples);
+	}
+
+	auto expected_samples(const AVFrame * frame) const {
+		return expected_samples((frame) ? frame->nb_samples : 0);
+	}
+
+	auto convert(void * dst, int dst_samples, const void * src, int src_samples) const {
+		const auto out = static_cast<uint8_t *>(dst);
+		const auto in = static_cast<const uint8_t *>(src);
+		const auto result = swr_convert(
+			m_resampler,
+			&out, dst_samples,
+			&in, src_samples
+		);
+		if (result < 0) {
+			throw std::runtime_error("Cannot convert samples");
+		}
+		return result;
+	}
+
+	auto convert(void * buffer, const AVFrame * frame) const {
+		const auto num_samples = expected_samples(frame);
+		return convert(
+			buffer, num_samples,
+			(frame) ? frame->data[0] : nullptr,
+			(frame) ? frame->nb_samples : 0
+		);
+	}
+};
+
+auto make_sample_buffer(int num_channels, int num_samples, AVSampleFormat format) {
+	uint8_t * buffer = nullptr;
+	const auto result = av_samples_alloc(
+		&buffer,
+		nullptr,
+		num_channels,
+		num_samples,
+		format,
+		1
+	);
+	if (result < 0) {
+		throw std::runtime_error("Cannot allocate sample buffer");
+	}
+	return SampleBuffer(buffer, num_channels * num_samples * av_get_bytes_per_sample(format));
+}
+
+} // local
+
+struct FFmpegStream {
+
+	AudioType type = AudioType::AT_INVALID;
+	AVChannelLayout input_layout = {};
+	AVSampleFormat input_format = AV_SAMPLE_FMT_NONE;
+	int input_sample_rate = 0;
+	std::list<SampleBuffer> buffers;
+	Resampler resampler;
+	bool stopped = false;
+	bool closed = false;
+
+	FFmpegStream(
+		AudioType _type,
+		const AVChannelLayout * layout,
+		AVSampleFormat format,
+		int sample_rate
+	) {
+		type = _type;
+		if (av_channel_layout_copy(&input_layout, layout) != 0) {
+			throw std::runtime_error("Cannot copy channel layout");
+		}
+		input_format = format;
+		input_sample_rate = sample_rate;
+		const auto output_layout = channo_to_FFmpeg_layout(g_device_num_channels);
+		const auto output_format = SDL_to_FFmpeg_format(g_device_format);
+		const auto output_sample_rate = g_device_sample_rate;
+		resampler = Resampler(
+			input_layout, input_format, input_sample_rate,
+			output_layout, output_format, output_sample_rate
+		);
+	}
+
+	inline ~FFmpegStream() = default;
+
+	FFmpegStream(const FFmpegStream &) = delete;
+	FFmpegStream & operator=(const FFmpegStream &) = delete;
+
+	FFmpegStream(FFmpegStream && other)
+	: type(std::exchange(other.type, AudioType::AT_INVALID))
+	, input_layout(std::exchange(other.input_layout, {}))
+	, input_format(std::exchange(other.input_format, AV_SAMPLE_FMT_NONE))
+	, input_sample_rate(std::exchange(other.input_sample_rate, 0))
+	, buffers(std::move(other.buffers))
+	, resampler(std::move(other.resampler))
+	, stopped(std::exchange(other.stopped, false))
+	, closed(std::exchange(other.closed, false)) {}
+
+	FFmpegStream & operator=(FFmpegStream && other) {
+		type = std::exchange(other.type, AudioType::AT_INVALID);
+		input_layout = std::exchange(other.input_layout, {});
+		input_format = std::exchange(other.input_format, AV_SAMPLE_FMT_NONE);
+		input_sample_rate = std::exchange(other.input_sample_rate, 0);
+		buffers = std::move(other.buffers);
+		resampler = std::move(other.resampler);
+		stopped = std::exchange(other.stopped, false);
+		closed = std::exchange(other.closed, false);
+		return *this;
+	}
+
+	void append(const AVFrame * frame) {
+		// Process frame samples
+		JUSTLOG("Resampling %d samples", (frame) ? frame->nb_samples : 0);
+		const auto output_format = SDL_to_FFmpeg_format(g_device_format);
+		const auto output_channels = g_device_num_channels;
+		const auto expected_samples = resampler.expected_samples(frame);
+		JUSTLOG("Expecting %d samples", expected_samples);
+		const auto output_bps = av_get_bytes_per_sample(output_format);
+		if (expected_samples > 0) {
+			auto buffer = make_sample_buffer(output_channels, expected_samples, output_format);
+			const auto converted_samples = resampler.convert(buffer.data, frame);
+			JUSTLOG("Resampled %d samples", converted_samples);
+			if (converted_samples > 0) {
+				buffer.size = output_channels * converted_samples * output_bps;
+				buffers.emplace_back(std::move(buffer));
+			}
+		}
+	}
+
+	void close() {
+		// Process remaining samples and mark stream as closed
+		JUSTLOG("Resampling remaining samples");
+		const auto output_format = SDL_to_FFmpeg_format(g_device_format);
+		const auto output_channels = g_device_num_channels;
+		const auto expected_samples = resampler.expected_samples(nullptr);
+		JUSTLOG("Expecting %d samples", expected_samples);
+		const auto output_bps = av_get_bytes_per_sample(output_format);
+		if (expected_samples > 0) {
+			auto buffer = make_sample_buffer(output_channels, expected_samples, output_format);
+			const auto converted_samples = resampler.convert(buffer.data, nullptr);
+			JUSTLOG("Resampled %d samples", converted_samples);
+			if (converted_samples > 0) {
+				buffer.size = output_channels * converted_samples * output_bps;
+				buffers.emplace_back(std::move(buffer));
+			}
+		}
+		closed = true;
+	}
+
+	// TODO: test
+	void reconfigure(SDL_AudioFormat format, Uint8 new_channels, int new_sample_rate) {
+		// Convert existing buffers to new format
+		JUSTLOG("Reconfiguring...");
+		const auto old_channels = g_device_num_channels;
+		const auto old_layout = channo_to_FFmpeg_layout(old_channels);
+		const auto old_format = SDL_to_FFmpeg_format(g_device_format);
+		const auto old_sample_rate = g_device_sample_rate;
+		const auto old_bps = av_get_bytes_per_sample(old_format);
+		const auto new_layout = channo_to_FFmpeg_layout(new_channels);
+		const auto new_format = SDL_to_FFmpeg_format(format);
+		const auto new_bps = av_get_bytes_per_sample(new_format);
+
+		Resampler buffer_resampler(
+			old_layout, old_format, old_sample_rate,
+			new_layout, new_format, new_sample_rate
+		);
+
+		std::list<SampleBuffer> new_buffers;
+
+		for (const auto & buffer : buffers) {
+			const auto samples_in_buffer = (buffer.size - buffer.offset) / (old_channels * old_bps);
+			if (samples_in_buffer > 0) {
+				const auto expected_samples = buffer_resampler.expected_samples(samples_in_buffer);
+				auto new_buffer = make_sample_buffer(new_channels, expected_samples, new_format);
+				const auto converted_samples = buffer_resampler.convert(
+					new_buffer.data, expected_samples,
+					&buffer.data[buffer.offset], samples_in_buffer
+				);
+				if (converted_samples > 0) {
+					new_buffer.size = new_channels * converted_samples * new_bps;
+					new_buffers.emplace_back(std::move(new_buffer));
+				}
+			}
+		}
+		const auto remaining_samples = buffer_resampler.expected_samples(0);
+		if (remaining_samples > 0) {
+			auto new_buffer = make_sample_buffer(new_channels, remaining_samples, new_format);
+			const auto converted_samples = buffer_resampler.convert(
+				new_buffer.data, remaining_samples,
+				nullptr, 0
+			);
+			new_buffer.size = new_channels * converted_samples * new_bps;
+			new_buffers.emplace_back(std::move(new_buffer));
+		}
+
+		buffers = std::move(new_buffers);
+
+		// Create new resampler for future samples
+		resampler = Resampler(
+			input_layout, input_format, input_sample_rate,
+			new_layout, new_format, new_sample_rate
+		);
+	}
+};
+
+namespace {
+
+std::list<FFmpegStream> g_ffmpeg_streams;
+
+template<typename sample_type>
+inline void mix_samples(void * dst, const void * src, size_t size) {
+	const auto samples = size / sizeof(sample_type);
+	JUSTLOG("Mixing %d samples", samples);
+	for (size_t i = 0; i < samples; ++i) {
+		static_cast<sample_type *>(dst)[i] += static_cast<const sample_type *>(src)[i];
+	}
+}
+
+bool device_format_changed() {
+	// SDL3 provides SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED but since we don't have it, check every time
+	SDL_AudioSpec spec;
+	if (SDL_GetDefaultAudioInfo(nullptr, &spec, 0) != 0) {
+		throw std::runtime_error("Cannot query default audio device");
+	}
+	return spec.channels != g_device_num_channels ||
+		spec.format != g_device_format ||
+		spec.freq != g_device_sample_rate;
+}
+
+void SDLCALL sdl_audio_callback(void *, Uint8 * sum, int len);
+
+void reconfigure_sdl_device() {
+	std::lock_guard<std::mutex> guard(g_sdl_lock);
+	try {
+		JUSTLOG("Reconfiguring SDL device...");
+		if (g_sdl_device > 0) {
+			SDL_CloseAudioDevice(g_sdl_device);
+			g_sdl_device = 0;
+		}
+		SDL_AudioSpec desired;
+		if (SDL_GetDefaultAudioInfo(nullptr, &desired, 0) != 0) {
+			throw std::runtime_error("Cannot query default audio device");
+		}
+		desired.silence = 0;
+		desired.samples = 0;
+		desired.padding = 0;
+		desired.size = 0;
+		desired.callback = sdl_audio_callback;
+		desired.userdata = nullptr;
+		SDL_AudioSpec obtained;
+		g_sdl_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+		if (g_sdl_device <= 0) {
+			throw std::runtime_error("Cannot open audio device");
+		}
+		JUSTLOG("Channels %u -> %u", g_device_num_channels, obtained.channels);
+		JUSTLOG("Format %s -> %s", SDL_AudioFormat_to_string(g_device_format), SDL_AudioFormat_to_string(obtained.format));
+		JUSTLOG("Sample Rate %d Hz -> %d Hz", g_device_sample_rate, obtained.freq);
+
+		for (auto & stream : g_ffmpeg_streams) {
+			try {
+				stream.reconfigure(obtained.format, obtained.channels, obtained.freq);
+			} catch (const std::exception & e) {
+				ERRORLOG("%s", e.what());
+				stream.stopped = true;
+			}
+		}
+		g_device_num_channels = obtained.channels;
+		g_device_sample_rate = obtained.freq;
+		g_device_format = obtained.format;
+		SDL_PauseAudioDevice(g_sdl_device, 0);
+	} catch (const std::exception & e) {
+		ERRORLOG("%s", e.what());
+	}
+}
+
+void SDLCALL sdl_audio_callback(void *, Uint8 * sum, int len)
+{
+	std::lock_guard<std::mutex> guard(g_sdl_lock);
+	JUSTLOG("sdl_audio_callback, len = %d", len);
+	memset(sum, 0, len); // required on Windows apparently
+	if (device_format_changed()) {
+		JUSTLOG("Device format changed");
+		// We can't open or close devices within this callback, stop playback and defer work to a temporary thread.
+		SDL_PauseAudioDevice(g_sdl_device, 1);
+		std::thread(reconfigure_sdl_device).detach();
+		return;
+	}
+	JUSTLOG("streams %d", g_ffmpeg_streams.size());
+	for (auto & stream : g_ffmpeg_streams) {
+		size_t offset = 0;
+		JUSTLOG("buffers %d, stopped %s, closed %s", stream.buffers.size(), stream.stopped ? "yes" : "no", stream.closed ? "yes" : "no");
+		for (size_t remaining = len; remaining > 0;) {
+			if (stream.buffers.empty() || stream.stopped) {
+				break;
+			}
+			auto & buffer = stream.buffers.front();
+			const size_t available = buffer.size - buffer.offset;
+			const size_t consumed = std::min(available, remaining);
+			switch (g_device_format) {
+				case AUDIO_S8: {
+					mix_samples<int8_t>(&sum[offset], &buffer.data[buffer.offset], consumed);
+					offset += consumed;
+					break;
+				}
+				case AUDIO_S16SYS: {
+					mix_samples<int16_t>(&sum[offset], &buffer.data[buffer.offset], consumed);
+					offset += consumed;
+					break;
+				}
+				case AUDIO_S32SYS: {
+					mix_samples<int32_t>(&sum[offset], &buffer.data[buffer.offset], consumed);
+					offset += consumed;
+					break;
+				}
+				case AUDIO_F32SYS: {
+					mix_samples<float>(&sum[offset], &buffer.data[buffer.offset], consumed);
+					offset += consumed;
+					break;
+				}
+				default: {
+					// don't care how to mix this, skip
+					offset += consumed;
+					break;
+				}
+			}
+			buffer.offset += consumed;
+			remaining -= consumed;
+			if (buffer.offset >= buffer.size) {
+				stream.buffers.pop_front();
+			}
+		}
+	}
+	g_ffmpeg_streams.erase(std::remove_if(
+		g_ffmpeg_streams.begin(), g_ffmpeg_streams.end(),
+		[](const auto & stream) -> auto {
+			return (stream.buffers.empty() || stream.stopped) && stream.closed;
+		}),
+		g_ffmpeg_streams.end()
+	);
+}
 
 } // local
 
@@ -467,6 +929,11 @@ extern "C" void FreeAudio() {
 	g_banks[1].clear();
 	g_openal_context = nullptr;
 	g_openal_device = nullptr;
+	SDL_CloseAudioDevice(g_sdl_device);
+	g_sdl_device = 0;
+	g_device_num_channels = 0;
+	g_device_format = 0;
+	g_device_sample_rate = 0;
 }
 
 extern "C" void set_master_volume(SoundVolume volume) {
@@ -573,24 +1040,45 @@ extern "C" void StopAllSamples() {
 
 extern "C" TbBool InitAudio(const SoundSettings * settings) {
 	try {
-		if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-			ERRORLOG("Unable to initialise SDL audio subsystem: %s", SDL_GetError());
-			return false;
-		}
 		if (game.flags_font & FFlg_AlexCheat) {
 			TbDate date;
 			LbDate(&date);
 			g_bb_king_mode |= ((date.Day == 1) && (date.Month == 2));
 		}
 		if (SoundDisabled) {
-			WARNLOG("Sound is disabled, skipping OpenAL initialization");
+			WARNLOG("Sound is disabled, skipping initialization");
 			return false;
 		}
-		if (g_openal_device || g_openal_context) {
-			WARNLOG("OpenAL already initialized");
-			return true;
+		// Set up SDL2 first
+		if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+			throw std::runtime_error("Cannot initialise SDL audio subsystem");
 		}
-		print_device_info();
+		SDL_AudioSpec desired;
+		if (SDL_GetDefaultAudioInfo(nullptr, &desired, 0) != 0) {
+			throw std::runtime_error("Cannot query default audio device");
+		}
+		JUSTLOG("Channels %u", desired.channels);
+		JUSTLOG("Format %s", SDL_AudioFormat_to_string(desired.format));
+		JUSTLOG("Sample Rate %d Hz", desired.freq);
+		desired.silence = 0;
+		desired.samples = 0;
+		desired.padding = 0;
+		desired.size = 0;
+		desired.callback = sdl_audio_callback;
+		desired.userdata = nullptr;
+		SDL_AudioSpec obtained;
+		g_sdl_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+		if (g_sdl_device <= 0) {
+			throw std::runtime_error("Cannot open audio device");
+		}
+		JUSTLOG("Channels %u", obtained.channels);
+		JUSTLOG("Format %s", SDL_AudioFormat_to_string(obtained.format));
+		JUSTLOG("Sample Rate %d Hz", obtained.freq);
+		g_device_num_channels = obtained.channels;
+		g_device_sample_rate = obtained.freq;
+		g_device_format = obtained.format;
+		SDL_PauseAudioDevice(g_sdl_device, 0);
+		// Now set up OpenAL
 		ALCdevice_ptr device(alcOpenDevice(nullptr));
 		if (!device) {
 			throw openal_error("Cannot open default audio device");
@@ -798,4 +1286,54 @@ extern "C" void set_effects_volume(SoundVolume volume) {
 
 extern "C" void toggle_bbking_mode() {
 	g_bb_king_mode = !g_bb_king_mode;
+}
+
+extern "C" FFmpegStream * ffmpeg_stream_open(
+	AudioType type,
+	const AVChannelLayout * layout,
+	AVSampleFormat format,
+	int sample_rate
+) {
+	std::lock_guard<std::mutex> guard(g_sdl_lock);
+	try {
+		g_ffmpeg_streams.emplace_back(type, layout, format, sample_rate);
+		const auto ptr = &g_ffmpeg_streams.back();
+		return ptr;
+	} catch (const std::exception & e) {
+		ERRORLOG("%s", e.what());
+		return nullptr;
+	}
+}
+
+extern "C" void ffmpeg_stream_append(FFmpegStream * stream, const AVFrame * frame) {
+	if (stream) {
+		std::lock_guard<std::mutex> guard(g_sdl_lock);
+		try {
+			stream->append(frame);
+		} catch (const std::exception & e) {
+			ERRORLOG("%s", e.what());
+		}
+	}
+}
+
+extern "C" void ffmpeg_stream_stop(FFmpegStream * stream) {
+	if (stream) {
+		std::lock_guard<std::mutex> guard(g_sdl_lock);
+		try {
+			stream->stopped = true;
+		} catch (const std::exception & e) {
+			ERRORLOG("%s", e.what());
+		}
+	}
+}
+
+extern "C" void ffmpeg_stream_close(FFmpegStream * stream) {
+	if (stream) {
+		std::lock_guard<std::mutex> guard(g_sdl_lock);
+		try {
+			stream->close();
+		} catch (const std::exception & e) {
+			ERRORLOG("%s", e.what());
+		}
+	}
 }
